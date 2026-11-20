@@ -135,6 +135,10 @@ PROVIDERS = [
     ("gemini", "GEMINI_API_KEY", lambda k, p: _openai_compat(
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         k, env("GEMINI_MODEL") or "gemini-flash-latest", p)),
+    # lighter model: usually available when the main one answers 503 "high demand"
+    ("gemini-lite", "GEMINI_API_KEY", lambda k, p: _openai_compat(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        k, env("GEMINI_LITE_MODEL") or "gemini-flash-lite-latest", p)),
     ("anthropic", "ANTHROPIC_API_KEY", lambda k, p: _anthropic(k, AI_MODEL, p)),
 ]
 
