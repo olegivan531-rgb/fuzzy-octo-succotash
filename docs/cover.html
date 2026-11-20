@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="uk"><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1000px;height:563px;overflow:hidden}
+body{font-family:Inter,"Noto Color Emoji",sans-serif;color:#fff;
+ background:radial-gradient(ellipse 70% 90% at 15% 20%,#2a5aa0 0%,transparent 60%),
+            radial-gradient(ellipse 60% 70% at 85% 90%,#1d3f78 0%,transparent 60%),#12305e;position:relative}
+.left{position:absolute;left:32px;top:92px;width:290px}
+.tag{display:inline-block;background:#2ea6ff;color:#fff;font-weight:600;font-size:9.5px;padding:4px 9px;border-radius:99px}
+h1{font-size:30px;line-height:1.08;font-weight:800;letter-spacing:-.6px;margin-top:12px}
+.sub{font-size:11px;line-height:1.5;color:#b9cbea;margin-top:10px}
+ul{list-style:none;margin-top:16px}
+li{display:flex;gap:8px;font-size:10.5px;line-height:1.4;margin-bottom:9px;color:#eaf1ff}
+li .i{width:14px;flex:none}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px}
+.chip{border:1px solid #5a7ab0;border-radius:6px;padding:4px 8px;font-size:9px;color:#dbe6fa}
+
+.cap{position:absolute;font-size:10px;font-weight:500;color:#cfdcf4;text-align:center;width:200px}
+.phone{position:absolute;width:200px;background:#0e1626;border-radius:24px;padding:6px;box-shadow:0 20px 50px rgba(0,0,0,.45)}
+.scr{background:#c9dcae;border-radius:19px;overflow:hidden;height:100%;display:flex;flex-direction:column;
+ background-image:radial-gradient(circle at 30% 20%,rgba(255,255,255,.18) 0 2px,transparent 3px),radial-gradient(circle at 70% 60%,rgba(255,255,255,.15) 0 2px,transparent 3px);background-size:38px 38px,46px 46px}
+.hdr{background:#fff;padding:9px 10px;display:flex;gap:7px;align-items:center;flex:none}
+.av{width:22px;height:22px;border-radius:50%;background:linear-gradient(#4fe3c8,#1fbfa0);color:#fff;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+.hn{font-size:8.5px;font-weight:700;color:#111}.hs{font-size:7px;color:#3b8fd9}
+.chat{flex:1;padding:6px;display:flex;flex-direction:column;justify-content:flex-end;gap:4px}
+.m{background:#fff;color:#111;border-radius:9px;padding:5px 7px;font-size:7.2px;line-height:1.38;max-width:92%;align-self:flex-start;position:relative}
+.m.me{background:#e2fdc6;align-self:flex-end}
+.m b{font-weight:700}
+.t{float:right;font-size:5.5px;color:#9aa;margin:4px 0 -2px 6px}
+.m.me .t{color:#5fa35a}
+.kb{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-top:-2px;width:92%}
+.kb div{background:rgba(70,100,60,.35);color:#fff;font-size:6.6px;font-weight:600;text-align:center;padding:4px 2px;border-radius:5px}
+.kb div.a{background:#2b7de9}
+.inp{background:#fff;margin:0;padding:7px 10px;font-size:7px;color:#999;flex:none;display:flex;justify-content:space-between}
+.gr{color:#1a8f3c}.mut{color:#666}
+.link{color:#2b7de9}
+</style></head><body>
+
+<div class="left">
+  <span class="tag">Telegram Bot · ШІ</span>
+  <h1>Пошук замовлень на Freelancehunt</h1>
+  <p class="sub">Бот сам знаходить релевантні проєкти, ШІ оцінює їх і пише відгук під конкретну задачу. Ви лише вирішуєте — подати чи ні.</p>
+  <ul>
+    <li><span class="i">🔎</span>Нові замовлення кожні 10 хв, фільтр за вашим профілем</li>
+    <li><span class="i">⭐</span>Оцінка ШІ 0–10, години роботи й рекомендована ціна</li>
+    <li><span class="i">✅</span>Кнопки «Подати / Переписати / Відхилити» — відгук іде на біржу після вашого «ок»</li>
+    <li><span class="i">🏆</span>Сповіщення, коли вас обрали виконавцем, і звіти кожні 3 год</li>
+  </ul>
+  <div class="chips">
+    <span class="chip">Python</span><span class="chip">Freelancehunt API</span>
+    <span class="chip">Telegram Bot API</span><span class="chip">Groq · Gemini</span>
+    <span class="chip">GitHub Actions 24/7</span>
+  </div>
+</div>
+
+<!-- phone 1 -->
+<div class="cap" style="left:345px;top:44px">ШІ знаходить і оцінює замовлення</div>
+<div class="phone" style="left:345px;top:64px;height:440px"><div class="scr">
+  <div class="hdr"><div class="av">H</div><div><div class="hn">Hunt</div><div class="hs">бот</div></div></div>
+  <div class="chat">
+    <div class="m">🆕 <b>Telegram-бот для запису в салон краси</b><br>
+      💰 4000 UAH · відгуків: 3 · [bot]<br>
+      <b>⭐ 8/10 · ~12 год</b> · профільна задача, адекватний бюджет<br><br>
+      <span class="mut">Потрібен бот: вибір послуги, майстра й часу, нагадування клієнтам, заявки в Google Таблицю…</span><br>
+      🔗 <span class="link">freelancehunt.com/project/…</span><br><br>
+      ✍️ <b>Відгук:</b><br>
+      Добрий день! Бачу, що вам важливі вибір майстра й нагадування клієнтам. Зроблю бота на Python: каталог послуг, вільні слоти з урахуванням тривалості, запис у Google Sheets і нагадування за добу. Уточніть, будь ласка: скільки майстрів і чи потрібна передоплата?<span class="t">12:10</span></div>
+    <div class="kb"><div>✅ Подати</div><div>✏️ Переписати</div><div>❌ Відхилити</div><div>📋 Для Claude</div></div>
+  </div>
+  <div class="inp"><span>Повідомлення</span><span>🎤</span></div>
+</div></div>
+
+<!-- phone 2 -->
+<div class="cap" style="left:565px;top:66px">Подача відгуку в один дотик</div>
+<div class="phone" style="left:565px;top:86px;height:440px"><div class="scr">
+  <div class="hdr"><div class="av">H</div><div><div class="hn">Hunt</div><div class="hs">бот</div></div></div>
+  <div class="chat">
+    <div class="m">Що змінити у відгуку? Напиши вказівку або «текст: …»<span class="t">12:11</span></div>
+    <div class="m me">коротше і додай про інтеграцію з CRM<span class="t">12:11 ✓✓</span></div>
+    <div class="m">🆕 <b>Telegram-бот для запису в салон краси</b><br>⭐ 8/10 · ~12 год<br><br>✍️ <b>Відгук</b> оновлено ✓<span class="t">12:11</span></div>
+    <div class="kb"><div class="a">✅ Подати</div><div>✏️ Переписати</div></div>
+    <div class="m">Подати відгук на «Telegram-бот для запису…»?<br>Пропоную: <b>3500 UAH, 4 дн.</b><br><br>Напиши «ок» або свої ціну і дні, напр.: 3000 4<span class="t">12:12</span></div>
+    <div class="m me">ок<span class="t">12:12 ✓✓</span></div>
+    <div class="m"><span class="gr">✅</span> <b>Відгук подано:</b> 3500 UAH, 4 дн.<br>«Telegram-бот для запису в салон краси»<span class="t">12:12</span></div>
+  </div>
+  <div class="inp"><span>Повідомлення</span><span>🎤</span></div>
+</div></div>
+
+<!-- phone 3 -->
+<div class="cap" style="left:785px;top:36px">Результат і контроль</div>
+<div class="phone" style="left:785px;top:56px;height:440px"><div class="scr">
+  <div class="hdr"><div class="av">H</div><div><div class="hn">Hunt</div><div class="hs">бот</div></div></div>
+  <div class="chat">
+    <div class="m">📈 За ~3 год: нових замовлень 41, надіслано 3.<br><span class="mut">Пропущено: не наш профіль 29, оцінка ШІ &lt; 5 — 6, понад 15 відгуків 3.</span><span class="t">15:00</span></div>
+    <div class="m">🏆 <b>ВАС ОБРАНО ВИКОНАВЦЕМ!</b><br>«Telegram-бот для запису в салон краси»<br>💰 3500 грн · 4 дн.<br>🔗 <span class="link">freelancehunt.com/project/…</span><br><br>Наступний крок: напиши замовнику й уточни деталі.<span class="t">15:42</span></div>
+    <div class="m me">/status<span class="t">15:43 ✓✓</span></div>
+    <div class="m"><b>📊 Подані відгуки:</b><br>🏆 Telegram-бот для запису — 3500 грн, 4 дн.<br>⏳ Звіт продажів у Google Sheets — 1200 грн, 2 дн.<br>⏳ Переклад договору EN → UA — 900 грн, 1 дн.<br>✖️ Парсер цін конкурентів — 2500 грн, 3 дн.<span class="t">15:43</span></div>
+  </div>
+  <div class="inp"><span>Повідомлення</span><span>🎤</span></div>
+</div></div>
+</body></html>
