@@ -2,8 +2,12 @@ name: freelancehunt-bot
 
 on:
   schedule:
-    - cron: "7 */6 * * *"   # restart every 6 h (a job may run at most 6 h)
+    - cron: "7 */3 * * *"   # backup only: GitHub often delays or drops scheduled runs
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write   # lets the job start its own next run
 
 # only one bot at a time: Telegram allows a single getUpdates consumer per bot
 concurrency:
@@ -46,3 +50,11 @@ jobs:
         with:
           path: state.json
           key: fh-state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A job may run at most 6 h, so the bot hands over to a fresh run itself.
+      # The new run waits in the concurrency queue until this one ends.
+      - name: Start next run
+        if: ${{ !cancelled() }}   # a manual Cancel stops the bot for good
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run freelancehunt-bot.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
