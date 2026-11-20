@@ -31,10 +31,11 @@ AI_TIMEOUT = 30       # seconds per AI request
 SCAN_EVERY_MIN = 10   # how often to look for new projects
 TRACK_EVERY_MIN = 5   # how often to check bids and notifications
 MAX_AGE_HOURS = 6
-MAX_BIDS = 10
+MAX_BIDS = 15
 PAGES = 3
-MIN_FIT = 6
+MIN_FIT = 5
 HOURS_PER_DAY = 3     # your free hours per day, for the days estimate
+REPORT_EVERY_H = 3    # short Telegram summary of what was checked
 
 # Keywords match from the START of a word ("бот" matches "боти", not "роботу").
 CATEGORIES = {
@@ -181,7 +182,8 @@ def load_state():
         if os.path.exists("seen.json"):
             s["seen"] = [str(x) for x in json.load(open("seen.json"))]
     for k, v in {"seen": [], "tg_offset": 0, "projects": {}, "await": None,
-                 "bids": {}, "feed_seen": [], "feed_init": False}.items():
+                 "bids": {}, "feed_seen": [], "feed_init": False,
+                 "stats": {}, "last_report": time.time()}.items():
         s.setdefault(k, v)
     return s
 
@@ -319,24 +321,31 @@ def scan_projects(s):
         if not res.get("links", {}).get("next"):
             break
     sent = 0
+    st = s["stats"]
+    def count(k):
+        st[k] = st.get(k, 0) + 1
     for it in found:
         pid = str(it.get("id"))
         if pid in seen:
             continue
         seen.add(pid)
         s["seen"].append(pid)
+        count("new")
         a = it.get("attributes", {})
         pub = parse_dt(a.get("published_at") or "")
         if pub and now - pub > timedelta(hours=MAX_AGE_HOURS):
+            count("old")
             continue
         bids = a.get("bid_count") or 0
         if bids > MAX_BIDS:
+            count("crowded")
             continue
         name = a.get("name", "")
         desc = re.sub(r"\s+", " ", a.get("description") or "")
         skills = ", ".join(x.get("name", "") for x in a.get("skills") or [])
         cat = classify(f"{name} {desc} {skills}")
         if not cat:
+            count("off_topic")
             continue
         budget = a.get("budget") or {}
         budget_s = f"{budget.get('amount')} {budget.get('currency')}" if budget else "не вказано"
@@ -351,6 +360,7 @@ def scan_projects(s):
             except (TypeError, ValueError):
                 fit = 0
             if fit < MIN_FIT:
+                count("low_fit")
                 continue
             hours, price = r.get("hours"), r.get("price_uah")
             head = f"⭐ {fit}/10 · ~{hours or '?'} год · {r.get('why', '')}"
@@ -368,6 +378,7 @@ def scan_projects(s):
         p["msg_id"] = msg["message_id"] if msg else None
         s["projects"][pid] = p
         sent += 1
+        count("sent")
     log(f"scan: {len(found)} checked, {sent} sent")
 
 
@@ -567,6 +578,16 @@ def track(s):
         except Exception as e:
             log("winner check error", e)
 
+def report(s):
+    st = s["stats"]
+    hours = max(1, round((time.time() - s["last_report"]) / 3600))
+    send(f"📈 За ~{hours} год: нових замовлень {st.get('new', 0)}, надіслано {st.get('sent', 0)}.\n"
+         f"Пропущено: не наш профіль {st.get('off_topic', 0)}, оцінка ШІ < {MIN_FIT} — "
+         f"{st.get('low_fit', 0)}, понад {MAX_BIDS} відгуків {st.get('crowded', 0)}, "
+         f"старіші за {MAX_AGE_HOURS} год {st.get('old', 0)}.")
+    s["stats"] = {}
+    s["last_report"] = time.time()
+
 # ---------------------------------------------------------------- main loop
 
 def main():
@@ -589,6 +610,12 @@ def main():
             except Exception as e:
                 log("scan error", e)
             last_scan = now
+            save_state(s)
+        if now - s["last_report"] >= REPORT_EVERY_H * 3600:
+            try:
+                report(s)
+            except Exception as e:
+                log("report error", e)
             save_state(s)
         if now - last_track >= TRACK_EVERY_MIN * 60:
             track(s)
