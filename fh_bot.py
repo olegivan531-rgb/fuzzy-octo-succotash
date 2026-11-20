@@ -527,6 +527,13 @@ def poll_telegram(s, wait):
 
 # ---------------------------------------------------------------- tracking
 
+# whole-word-start matches only: "обра" must not fire on "зображень"
+IMPORTANT_RE = re.compile(
+    r"(?<!\w)(обрал|обрано|обрав|обрала|выбрал|выбран|переможц|победител"
+    r"|вас.{0,20}виконавц|вас.{0,20}исполнител|умови співпрац|условия сотрудничеств)",
+    re.I)
+
+
 def track(s):
     # 1) Freelancehunt notifications (employer chose you, messages, etc.)
     try:
@@ -541,9 +548,15 @@ def track(s):
                 continue  # first run: don't flood with old notifications
             a = it.get("attributes", {})
             sender = (a.get("from") or {}).get("login") if isinstance(a.get("from"), dict) else None
-            msg = strip_html(a.get("message"))
-            important = re.search(r"обра|выбра|переможц|победител|виконавц|исполнител|умов|услови", msg, re.I)
-            send(("🏆🔔 " if important else "🔔 ") + (f"{sender}: " if sender else "") + msg)
+            raw = a.get("message") or ""
+            msg = strip_html(raw)
+            important = IMPORTANT_RE.search(msg)
+            href = re.search(r'href=["\']([^"\']+)', raw)
+            link = href.group(1) if href else ""
+            if link.startswith("/"):
+                link = "https://freelancehunt.com" + link
+            send(("🏆🔔 " if important else "🔔 ") + (f"{sender}: " if sender else "") + msg
+                 + (f"\n🔗 {link}" if link else ""))
         s["feed_init"] = True
     except Exception as e:
         log("feed error", e)
