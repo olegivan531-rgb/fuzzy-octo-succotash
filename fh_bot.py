@@ -159,8 +159,10 @@ def tg(method, **params):
     return res.get("result")
 
 
-def send(text, buttons=None, reply_to=None):
+def send(text, buttons=None, reply_to=None, html_mode=False):
     p = {"chat_id": TG_CHAT_ID, "text": text[:4000], "disable_web_page_preview": True}
+    if html_mode:
+        p["parse_mode"] = "HTML"
     if buttons:
         p["reply_markup"] = {"inline_keyboard": buttons}
     if reply_to:
@@ -448,7 +450,9 @@ def place_bid(s, pid, price, days):
     try:
         res = fh(f"/projects/{pid}/bids", body)
     except Exception as e:
-        send(f"⚠️ Не вдалося подати відгук на «{p['name']}»:\n{e}", reply_to=p.get("msg_id"))
+        # Freelancehunt switched off bid placement in API v2 (HTTP 410), so hand it over to the user
+        log("bid api error", e)
+        manual_bid(s, pid, price, days)
         return
     bid_id = str((res.get("data") or {}).get("id", ""))
     p["status"] = "submitted"
@@ -457,6 +461,21 @@ def place_bid(s, pid, price, days):
     edit_buttons(p.get("msg_id"))
     send(f"✅ Відгук подано: {price} {p.get('currency') or 'UAH'}, {days} дн.\n«{p['name']}»",
          reply_to=p.get("msg_id"))
+
+def manual_bid(s, pid, price, days):
+    p = s["projects"][pid]
+    cur = p.get("currency") or "UAH"
+    p["status"] = "submitted"
+    s["bids"][pid] = {"bid_id": "", "status": "manual", "winner": False, "name": p["name"],
+                      "link": p["link"], "price": price, "days": days}
+    edit_buttons(p.get("msg_id"))
+    send("📝 Freelancehunt більше не дозволяє подавати відгуки через API — подай вручну (1 хв):\n\n"
+         f"1. Відкрий: {html.escape(p['link'] or '')}\n"
+         f"2. Ціна: <code>{price}</code> {cur}, строк: <code>{days}</code> дн.\n"
+         "3. Текст відгуку — у наступному повідомленні, натисни на нього, щоб скопіювати.",
+         reply_to=p.get("msg_id"), html_mode=True)
+    send(f"<code>{html.escape(p['proposal'])}</code>", html_mode=True)
+
 
 # ---------------------------------------------------------------- telegram updates
 
@@ -548,7 +567,8 @@ def handle_text(s, text):
 def status_text(s):
     lines = ["📊 Подані відгуки:"]
     for pid, b in s["bids"].items():
-        mark = "🏆" if b.get("winner") else {"active": "⏳", "rejected": "✖️", "revoked": "↩️"}.get(b["status"], "•")
+        mark = "🏆" if b.get("winner") else {"active": "⏳", "rejected": "✖️", "revoked": "↩️",
+                                             "manual": "📝"}.get(b["status"], "•")
         lines.append(f"{mark} {b['name']} — {b['price']} грн, {b['days']} дн.")
     if len(lines) == 1:
         lines.append("поки немає")
