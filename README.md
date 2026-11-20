@@ -9,7 +9,7 @@
 1. **Токен Freelancehunt:** freelancehunt.com/my/api2 → згенерувати API-ключ.
 2. **Telegram-бот:** @BotFather → `/newbot` → скопіюй токен. Напиши своєму боту будь-що й відкрий
    `https://api.telegram.org/bot<ТОКЕН>/getUpdates` — число в `"chat":{"id":...}` це твій chat id.
-3. **Безкоштовні ключі ШІ** (можна обидва — якщо один упреться в ліміт, спрацює другий):
+3. **Безкоштовні ключі ШІ** (можна обидва — спершу пробується Groq, якщо він упреться в ліміт, спрацює Gemini):
    - Gemini: aistudio.google.com → Get API key (без картки)
    - Groq: console.groq.com → API Keys (без картки)
    Платний Anthropic (`ANTHROPIC_API_KEY`) — необов'язковий резерв. Без жодного ключа система надсилає шаблонні відгуки.

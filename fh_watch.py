@@ -7,12 +7,17 @@ Env vars: FH_TOKEN, TG_BOT_TOKEN, TG_CHAT_ID; AI (optional, any): GEMINI_API_KEY
 import json, os, re, sys, urllib.request, urllib.parse
 from datetime import datetime, timezone, timedelta
 
-FH_TOKEN = os.environ["FH_TOKEN"]
-TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
-TG_CHAT_ID = os.environ["TG_CHAT_ID"]
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-AI_MODEL = os.environ.get("AI_MODEL", "claude-haiku-5-5")
-SEEN_FILE = os.environ.get("SEEN_FILE", "seen.json")
+def env(name, default=""):
+    """Env var with stray spaces/newlines (common when pasting secrets) removed."""
+    return (os.environ.get(name) or default).strip()
+
+
+FH_TOKEN = env("FH_TOKEN")
+TG_BOT_TOKEN = env("TG_BOT_TOKEN")
+TG_CHAT_ID = env("TG_CHAT_ID")
+AI_MODEL = env("AI_MODEL", "claude-haiku-5-5")
+AI_TIMEOUT = 30     # seconds per AI request
+SEEN_FILE = env("SEEN_FILE", "seen.json")
 
 MAX_AGE_HOURS = 6   # ignore older projects
 MAX_BIDS = 15       # skip crowded projects
@@ -77,9 +82,9 @@ DRAFTS = {
 }
 
 
-def http_json(url, headers=None, data=None):
+def http_json(url, headers=None, data=None, timeout=60):
     req = urllib.request.Request(url, headers=headers or {}, data=data)
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 
@@ -107,7 +112,7 @@ def _openai_compat(url, key, model, prompt):
     body = json.dumps({"model": model, "max_tokens": 800, "temperature": 0.5,
                        "messages": [{"role": "user", "content": prompt}]}).encode()
     res = http_json(url, {"Authorization": f"Bearer {key}",
-                          "content-type": "application/json"}, data=body)
+                          "content-type": "application/json"}, data=body, timeout=AI_TIMEOUT)
     return res["choices"][0]["message"]["content"]
 
 
@@ -116,18 +121,18 @@ def _anthropic(key, model, prompt):
                        "messages": [{"role": "user", "content": prompt}]}).encode()
     res = http_json("https://api.anthropic.com/v1/messages", {
         "x-api-key": key, "anthropic-version": "2023-06-01",
-        "content-type": "application/json"}, data=body)
+        "content-type": "application/json"}, data=body, timeout=AI_TIMEOUT)
     return "".join(b.get("text", "") for b in res.get("content", []))
 
 
 # Providers tried in order; the first one with a key that answers wins.
 PROVIDERS = [
-    ("gemini", "GEMINI_API_KEY", lambda k, p: _openai_compat(
-        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        k, os.environ.get("GEMINI_MODEL") or "gemini-flash-latest", p)),
     ("groq", "GROQ_API_KEY", lambda k, p: _openai_compat(
         "https://api.groq.com/openai/v1/chat/completions",
-        k, os.environ.get("GROQ_MODEL") or "openai/gpt-oss-120b", p)),
+        k, env("GROQ_MODEL") or "openai/gpt-oss-120b", p)),
+    ("gemini", "GEMINI_API_KEY", lambda k, p: _openai_compat(
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        k, env("GEMINI_MODEL") or "gemini-flash-latest", p)),
     ("anthropic", "ANTHROPIC_API_KEY", lambda k, p: _anthropic(k, AI_MODEL, p)),
 ]
 
@@ -136,8 +141,8 @@ def ai_review(name, desc, skills, budget_s, bids):
     """dict(fit, why, hours, proposal) or None if no AI key works."""
     prompt = AI_PROMPT.format(profile=PROFILE, name=name, budget=budget_s, bids=bids,
                               skills=skills, desc=desc[:3000])
-    for pname, env, call in PROVIDERS:
-        key = os.environ.get(env, "")
+    for pname, env_name, call in PROVIDERS:
+        key = env(env_name)
         if not key:
             continue
         try:
