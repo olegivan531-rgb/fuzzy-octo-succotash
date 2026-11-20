@@ -387,6 +387,44 @@ def scan_projects(s):
     log(f"scan: {len(found)} checked, {sent} sent")
 
 
+def manual_project(s, pid):
+    """Project the user sent by link: always show it with buttons, whatever the filters say."""
+    send("⏳ Готую відгук…")
+    it = fh(f"/projects/{pid}").get("data") or {}
+    a = it.get("attributes", {})
+    name = a.get("name", "")
+    desc = re.sub(r"\s+", " ", strip_html(a.get("description_html") or a.get("description") or ""))
+    skills = ", ".join(x.get("name", "") for x in a.get("skills") or [])
+    budget = a.get("budget") or {}
+    budget_s = f"{budget.get('amount')} {budget.get('currency')}" if budget else "не вказано"
+    bids = a.get("bid_count") or 0
+    link = it.get("links", {}).get("self") or {}
+    link = link.get("web") if isinstance(link, dict) else link
+    r = ai_review(name, desc, skills, budget_s, bids)
+    hours = price = None
+    if r is not None:
+        hours, price = r.get("hours"), r.get("price_uah")
+        head = f"⭐ {r.get('fit', '?')}/10 · ~{hours or '?'} год · {r.get('why', '')}"
+        proposal = r.get("proposal", "")
+    else:
+        head = "⚠️ ШІ недоступний — відгук-заготовка, перепиши перед подачею"
+        proposal = FALLBACK.format(name=name)
+    p = {"name": name, "desc": desc, "skills": skills, "cat": classify(f"{name} {desc} {skills}") or "—",
+         "bids": bids, "budget_s": budget_s, "budget_amount": budget.get("amount"),
+         "currency": budget.get("currency") or "UAH", "safe_type": a.get("safe_type"),
+         "link": link or f"https://freelancehunt.com/project/{pid}.html", "head": head,
+         "proposal": proposal, "hours": hours, "price": price, "status": "new"}
+    msg = send(project_text(p), project_buttons(pid))
+    p["msg_id"] = msg["message_id"] if msg else None
+    s["projects"][pid] = p
+    if pid not in s["seen"]:
+        s["seen"].append(pid)
+
+
+# ".../project/some-slug/1665722.html", "/bid 1665722" or just "1665722"
+PROJECT_REF_RE = re.compile(r"freelancehunt\.\w+/project/\S*?(\d{5,})\.html|^/bid\s+(\d{5,})$|^(\d{6,})$")
+
+
 def suggest_terms(p):
     try:
         hours = float(p.get("hours") or 0)
@@ -455,8 +493,17 @@ def handle_callback(s, cq):
 def handle_text(s, text):
     w = s.get("await")
     t = text.strip()
+    ref = PROJECT_REF_RE.search(t)
+    if ref:
+        s["await"] = None
+        try:
+            manual_project(s, next(g for g in ref.groups() if g))
+        except Exception as e:
+            send(f"⚠️ Не вдалося відкрити замовлення: {e}")
+        return
     if not w:
-        send("Команди: кнопки під замовленнями. /status — що зараз відстежується.") \
+        send("Команди: кнопки під замовленнями. /status — подані відгуки.\n"
+             "Надішли посилання на будь-яке замовлення з Freelancehunt — напишу відгук і дам кнопки.") \
             if t != "/status" else send(status_text(s))
         return
     if t.lower() in ("стоп", "stop", "скасувати"):
