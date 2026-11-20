@@ -4,7 +4,7 @@ You send the proposal, negotiate terms and do the work yourself.
 
 Env vars: FH_TOKEN, TG_BOT_TOKEN, TG_CHAT_ID; AI (optional, any): GEMINI_API_KEY, GROQ_API_KEY, ANTHROPIC_API_KEY
 """
-import json, os, re, sys, urllib.request, urllib.parse
+import json, os, re, sys, urllib.error, urllib.request, urllib.parse
 from datetime import datetime, timezone, timedelta
 
 def env(name, default=""):
@@ -83,7 +83,9 @@ DRAFTS = {
 
 
 def http_json(url, headers=None, data=None, timeout=60):
-    req = urllib.request.Request(url, headers=headers or {}, data=data)
+    # Cloudflare in front of some APIs (e.g. Groq) answers 403 to the default Python-urllib agent
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; fh-watch/1.0)", **(headers or {})}
+    req = urllib.request.Request(url, headers=headers, data=data)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
@@ -150,6 +152,8 @@ def ai_review(name, desc, skills, budget_s, bids):
             m = re.search(r"\{.*\}", text, re.S)
             if m:
                 return json.loads(m.group(0))
+        except urllib.error.HTTPError as e:
+            print(f"ai error ({pname}): {e} {e.read()[:300]!r}", file=sys.stderr)
         except Exception as e:
             print(f"ai error ({pname}):", e, file=sys.stderr)
     return None
