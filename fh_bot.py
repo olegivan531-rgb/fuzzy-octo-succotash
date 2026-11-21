@@ -350,7 +350,9 @@ def project_buttons(pid):
 
 
 def project_text(p):
-    return (f"🆕 {p['name']}\n💰 {p['budget_s']} · відгуків: {p['bids']} · [{p['cat']}]\n{p['head']}\n\n"
+    price, days = suggest_terms(p)
+    return (f"🆕 {p['name']}\n💰 {p['budget_s']} · відгуків: {p['bids']} · [{p['cat']}]\n{p['head']}\n"
+            f"💵 Ставка: {price} {p.get('currency') or 'UAH'} · строк: {days} дн.\n\n"
             f"{p['desc'][:350]}{'…' if len(p['desc']) > 350 else ''}\n🔗 {p['link']}\n\n"
             f"✍️ Відгук:\n{p['proposal']}")
 
