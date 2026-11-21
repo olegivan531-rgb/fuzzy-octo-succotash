@@ -44,7 +44,8 @@ FL_QUERIES = ["telegram bot", "google sheets", "apps script", "n8n", "chatgpt au
               "flutter", "figma", "translation ukrainian", "translation french"]
 FL_CURRENCIES = {"USD", "EUR", "GBP", "AUD", "CAD"}
 FL_MIN_BUDGET = 50    # max budget below this (in FL_CURRENCIES) is not worth a bid
-FL_MAX_BIDS = 12      # Freelancer.com is busier than Freelancehunt
+FL_MAX_BIDS = 6       # free plan: only 6 bids/month, so only the least crowded projects
+FL_MIN_FIT = 8        # and only the best-fitting ones
 
 # Keywords match from the START of a word ("бот" matches "боти", not "роботу").
 CATEGORIES = {
@@ -484,7 +485,7 @@ def scan_freelancer(s):
                 fit = int(r.get("fit", 0))
             except (TypeError, ValueError):
                 fit = 0
-            if fit < MIN_FIT:
+            if fit < FL_MIN_FIT:
                 count("low_fit")
                 continue
             hours = r.get("hours")
