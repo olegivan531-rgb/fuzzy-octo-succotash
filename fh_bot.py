@@ -2,12 +2,14 @@
 
 - Finds new relevant projects, AI rates fit and writes a tailored proposal.
 - Sends each to Telegram with buttons: Submit / Rewrite / Reject / For Claude.
-- Submit -> you confirm price and days -> bid is placed via Freelancehunt API.
+- Submit -> you confirm price and days. Freelancehunt API більше не приймає ставки (410),
+  тож бот готує ціну/строк/текст для ручної подачі.
 - Tracks your bids and Freelancehunt notifications; when an employer picks you
   or writes to you, sends a separate Telegram message.
 
 Run:  python fh_bot.py                 (runs forever)
       python fh_bot.py --minutes 350   (stops after N minutes; for GitHub Actions)
+      python fh_bot.py --dry-run --minutes 1   (scan + AI, messages printed instead of Telegram)
 
 Env: FH_TOKEN, TG_BOT_TOKEN, TG_CHAT_ID
      AI (optional, tried in order): GROQ_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY
@@ -24,7 +26,7 @@ def env(name, default=""):
 FH_TOKEN = env("FH_TOKEN")
 TG_BOT_TOKEN = env("TG_BOT_TOKEN")
 TG_CHAT_ID = env("TG_CHAT_ID")
-STATE_FILE = env("STATE_FILE", "state.json")
+STATE_FILE = env("STATE_FILE", "state.dryrun.json" if "--dry-run" in sys.argv else "state.json")
 AI_MODEL = env("AI_MODEL", "claude-haiku-5-5")
 AI_TIMEOUT = 30       # seconds per AI request
 
@@ -36,6 +38,16 @@ PAGES = 3
 MIN_FIT = 7           # fewer, better-fitting bids
 HOURS_PER_DAY = 3     # your free hours per day, for the days estimate
 REPORT_EVERY_H = 3    # short Telegram summary of what was checked
+
+# Prices. The AI estimates in UAH; the bid is shown in the project's currency.
+RATES_UAH = {"UAH": 1, "USD": 41.5, "EUR": 48.0, "PLN": 11.2, "GBP": 55.0, "AUD": 27.0, "CAD": 30.0}  # правити вручну
+HOURLY_UAH = 400        # моя ставка за годину
+MIN_PRICE_UAH = 500     # applied only when the project has no budget
+PRICE_FLOOR = 0.70      # частка бюджету
+PRICE_CEIL = 1.00
+DEFAULT_HOURS = 8       # when neither the AI nor the text gives a volume
+
+DRY_RUN = "--dry-run" in sys.argv   # print messages instead of sending; never poll Telegram
 
 # Freelancer.com (public API, no key). Bids are placed by hand on the site; the bot finds and drafts.
 FL_ENABLED = env("FL_ENABLED", "1") == "1"
@@ -175,7 +187,19 @@ def fh(path, body=None):
                      method="POST" if body is not None else "GET")
 
 
+_dry_msg_id = 0
+
+
 def tg(method, **params):
+    if DRY_RUN:
+        global _dry_msg_id
+        _dry_msg_id += 1
+        if method == "sendMessage":
+            kb = (params.get("reply_markup") or {}).get("inline_keyboard") or []
+            btns = " | ".join(b["text"] for row in kb for b in row)
+            print(f"\n----- Telegram (dry-run) -----\n{params.get('text')}"
+                  + (f"\n[{btns}]" if btns else ""), flush=True)
+        return {"message_id": _dry_msg_id}
     data = json.dumps(params).encode()
     res = http_json(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/{method}",
                     {"Content-Type": "application/json"}, data, timeout=70)
@@ -274,16 +298,27 @@ PROVIDERS = [
 ]
 
 
+AI_TIMEOUTS = {}        # provider -> consecutive timeouts in this run
+AI_SKIP_AFTER = 2       # after this many timeouts in a row the provider is skipped until restart
+
+
 def ai_text(prompt, parse=None):
     """First provider whose answer is non-empty (and passes `parse`, if given) wins."""
     for pname, env_name, call in PROVIDERS:
         key = env(env_name)
-        if not key:
+        if not key or AI_TIMEOUTS.get(pname, 0) >= AI_SKIP_AFTER:
             continue
         try:
             text = call(key, prompt)
+            AI_TIMEOUTS[pname] = 0
             return parse(text) if parse else text
         except Exception as e:
+            if "timed out" in str(e).lower() or isinstance(e, TimeoutError):
+                AI_TIMEOUTS[pname] = AI_TIMEOUTS.get(pname, 0) + 1
+                if AI_TIMEOUTS[pname] >= AI_SKIP_AFTER:
+                    log(f"ai: {pname} timed out {AI_SKIP_AFTER}x in a row, skipping it until restart")
+            else:
+                AI_TIMEOUTS[pname] = 0
             log(f"ai error ({pname}):", str(e)[:300])
     return None
 
@@ -304,6 +339,8 @@ def ai_review(name, desc, skills, budget_s, bids, site="Freelancehunt"):
 
 def startup_report():
     lines = ["🤖 Бот запущено. Перевірка ШІ:"]
+    if env("GITHUB_RUN_ID"):
+        lines.insert(1, f"run: {env('GITHUB_RUN_ID')}")
     ok = False
     for pname, env_name, call in PROVIDERS:
         key = env(env_name)
@@ -350,9 +387,13 @@ def project_buttons(pid):
 
 
 def project_text(p):
-    price, days = suggest_terms(p)
+    t = terms(p)
+    cur = cur_of(p)
+    uah = "" if cur == "UAH" else f" (~{t['price_uah']} грн)"
+    warn = "".join(f"\n{w}" for w in t["warnings"])
     return (f"🆕 {p['name']}\n💰 {p['budget_s']} · відгуків: {p['bids']} · [{p['cat']}]\n{p['head']}\n"
-            f"💵 Ставка: {price} {p.get('currency') or 'UAH'} · строк: {days} дн.\n\n"
+            f"💵 Ставка: {t['price']} {cur}{uah} · строк: {t['days']} дн. · ~{fmt_num(t['hours'])} год"
+            f"{warn}\n\n"
             f"{p['desc'][:350]}{'…' if len(p['desc']) > 350 else ''}\n🔗 {p['link']}\n\n"
             f"✍️ Відгук:\n{p['proposal']}")
 
@@ -419,7 +460,7 @@ def scan_projects(s):
              "budget_s": budget_s, "budget_amount": budget.get("amount"),
              "currency": budget.get("currency") or "UAH", "safe_type": a.get("safe_type"),
              "link": link, "head": head, "proposal": proposal, "hours": hours,
-             "price": price, "status": "new"}
+             "price_uah": price, "status": "new"}
         msg = send(project_text(p), project_buttons(pid))
         p["msg_id"] = msg["message_id"] if msg else None
         s["projects"][pid] = p
@@ -496,9 +537,9 @@ def scan_freelancer(s):
             head = "⚠️ ШІ недоступний — відгук-заготовка, перепиши перед подачею"
             proposal = FALLBACK.format(name=name)
         p = {"name": name, "desc": desc, "skills": skills, "cat": f"Freelancer.com · {cat}", "bids": bids,
-             "budget_s": budget_s, "budget_amount": round(bmax * 0.8), "currency": cur, "safe_type": None,
-             "link": link, "head": head, "proposal": proposal, "hours": hours,
-             "price": round(bmax * 0.8), "status": "new", "site": "freelancer"}
+             "budget_s": budget_s, "budget_amount": bmax, "budget_max": bmax, "currency": cur,
+             "safe_type": None, "link": link, "head": head, "proposal": proposal, "hours": hours,
+             "status": "new", "site": "freelancer"}
         msg = send(project_text(p), project_buttons(pid))
         p["msg_id"] = msg["message_id"] if msg else None
         s["projects"][pid] = p
@@ -533,7 +574,7 @@ def manual_project(s, pid):
          "bids": bids, "budget_s": budget_s, "budget_amount": budget.get("amount"),
          "currency": budget.get("currency") or "UAH", "safe_type": a.get("safe_type"),
          "link": link or f"https://freelancehunt.com/project/{pid}.html", "head": head,
-         "proposal": proposal, "hours": hours, "price": price, "status": "new"}
+         "proposal": proposal, "hours": hours, "price_uah": price, "status": "new"}
     msg = send(project_text(p), project_buttons(pid))
     p["msg_id"] = msg["message_id"] if msg else None
     s["projects"][pid] = p
@@ -545,18 +586,111 @@ def manual_project(s, pid):
 PROJECT_REF_RE = re.compile(r"freelancehunt\.\w+/project/\S*?(\d{5,})\.html|^/bid\s+(\d{5,})$|^(\d{6,})$")
 
 
+# ---------------------------------------------------------------- price, currency, days
+
+def _num(x):
+    try:
+        v = float(x)
+        return v if v > 0 else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def fmt_num(x):
+    return str(int(x)) if float(x).is_integer() else f"{x:.1f}"
+
+
+def cur_of(p):
+    return (p.get("currency") or "UAH").upper()
+
+
+def cur_label(cur):
+    return "грн" if (cur or "UAH").upper() == "UAH" else cur.upper()
+
+
+def _rate(cur):
+    cur = (cur or "UAH").upper()
+    if cur not in RATES_UAH:
+        log("unknown currency", cur)
+        return RATES_UAH["USD"]
+    return RATES_UAH[cur]
+
+
+def _step(cur):
+    return 50 if (cur or "UAH").upper() in ("UAH", "PLN") else 5
+
+
+def to_uah(amount, cur):
+    return _num(amount) * _rate(cur)
+
+
+def from_uah(uah, cur, min_uah=0, max_uah=0):
+    """UAH -> project currency, rounded (UAH/PLN to 50, others to 5) without leaving [min_uah, max_uah]."""
+    rate, step = _rate(cur), _step(cur)
+    v = round(_num(uah) / rate / step) * step
+    if min_uah and v * rate < min_uah - 1e-6:
+        v = math.ceil(min_uah / rate / step) * step
+    elif max_uah and v * rate > max_uah + 1e-6:
+        v = max(step, math.floor(max_uah / rate / step) * step)
+    return int(max(v, step))
+
+
+_PAGES_RE = re.compile(r"(\d+)\s*(?:сторін|стор\.|страниц|стр\.|pages?\b)", re.I)
+_SCREENS_RE = re.compile(r"(\d+)\s*(?:екран|экран|screens?\b)", re.I)
+_ITEMS_RE = re.compile(r"(\d+)\s*(?:товар|позиц|рядк|строк|rows?\b|items?\b)", re.I)
+_EDIT_RE = re.compile(r"редаг|вичит|редакт|корект|proofread|edit", re.I)
+
+
+def _counts(rx, text):
+    return [n for n in (int(m) for m in rx.findall(text)) if 0 < n <= 5000]  # bigger = prices, years
+
+
+def volume_hours(p):
+    """Hours implied by the volume stated in the title/description (pages, screens, items)."""
+    text = f"{p.get('name') or ''} {p.get('desc') or ''}"
+    hours = 0.0
+    pages = _counts(_PAGES_RE, text)
+    if pages and ("translate" in str(p.get("cat") or "") or _EDIT_RE.search(text)):
+        hours += max(pages) * 1.0           # ~1 page/hour with a full check
+    screens = _counts(_SCREENS_RE, text)
+    if screens:
+        hours += max(screens) * 4
+    items = _counts(_ITEMS_RE, text)
+    if items:
+        hours += min(max(items) * 0.05, 40)
+    return hours
+
+
+def terms(p):
+    """dict(price, price_uah, days, hours, warnings); price is in the project's currency."""
+    cur = cur_of(p)
+    warnings = []
+    hours = max(_num(p.get("hours")), volume_hours(p))
+    if not hours:
+        hours = DEFAULT_HOURS
+        warnings.append("⚠️ без оцінки обсягу — уточни перед подачею")
+    base_uah = hours * HOURLY_UAH
+    ai_uah = _num(p.get("price_uah"))
+    if not ai_uah and p.get("site") != "freelancer":
+        ai_uah = _num(p.get("price"))       # older state.json entries kept the AI's UAH price here
+    price_uah = ai_uah or base_uah
+    budget_uah = to_uah(p.get("budget_max") or p.get("budget_amount"), cur)
+    lo = hi = 0
+    if budget_uah:
+        lo, hi = PRICE_FLOOR * budget_uah, PRICE_CEIL * budget_uah
+        price_uah = min(max(price_uah, lo), hi)
+        if base_uah > 1.3 * budget_uah:
+            warnings.append(f"⚠️ Оцінка ~{round(base_uah)} грн, бюджет замалий")
+    else:
+        price_uah = max(price_uah, MIN_PRICE_UAH)
+    price = from_uah(price_uah, cur, lo, hi)
+    return {"price": price, "price_uah": round(to_uah(price, cur)),
+            "days": max(1, math.ceil(hours / HOURS_PER_DAY)), "hours": hours, "warnings": warnings}
+
+
 def suggest_terms(p):
-    try:
-        hours = float(p.get("hours") or 0)
-    except (TypeError, ValueError):
-        hours = 0
-    days = max(1, math.ceil(hours / HOURS_PER_DAY)) if hours else 3
-    price = p.get("price") or p.get("budget_amount") or 1000
-    try:
-        price = int(float(price))
-    except (TypeError, ValueError):
-        price = 1000
-    return price, days
+    t = terms(p)
+    return t["price"], t["days"], t["warnings"]
 
 
 def place_bid(s, pid, price, days):
@@ -576,7 +710,7 @@ def place_bid(s, pid, price, days):
     bid_id = str((res.get("data") or {}).get("id", ""))
     p["status"] = "submitted"
     s["bids"][pid] = {"bid_id": bid_id, "status": "active", "winner": False, "name": p["name"],
-                      "link": p["link"], "price": price, "days": days}
+                      "link": p["link"], "price": price, "days": days, "currency": cur_of(p)}
     edit_buttons(p.get("msg_id"))
     send(f"✅ Відгук подано: {price} {p.get('currency') or 'UAH'}, {days} дн.\n«{p['name']}»",
          reply_to=p.get("msg_id"))
@@ -586,7 +720,7 @@ def manual_bid(s, pid, price, days):
     cur = p.get("currency") or "UAH"
     p["status"] = "submitted"
     s["bids"][pid] = {"bid_id": "", "status": "manual", "winner": False, "name": p["name"],
-                      "link": p["link"], "price": price, "days": days}
+                      "link": p["link"], "price": price, "days": days, "currency": cur}
     edit_buttons(p.get("msg_id"))
     site = "Freelancer.com" if p.get("site") == "freelancer" else "Freelancehunt"
     send(f"📝 Подай відгук вручну на {site} (1 хв):\n\n"
@@ -614,9 +748,10 @@ def handle_callback(s, cq):
         edit_buttons(p.get("msg_id"))
         send(f"❌ Відхилено: «{p['name']}»", reply_to=p.get("msg_id"))
     elif action == "ok":
-        price, days = suggest_terms(p)
+        price, days, warnings = suggest_terms(p)
         s["await"] = {"kind": "terms", "pid": pid, "price": price, "days": days}
-        send(f"Подати відгук на «{p['name']}»?\nПропоную: {price} {p.get('currency') or 'UAH'}, {days} дн.\n\n"
+        warn = "".join(f"\n{w}" for w in warnings)
+        send(f"Подати відгук на «{p['name']}»?\nПропоную: {price} {cur_of(p)}, {days} дн.{warn}\n\n"
              f"Напиши «ок», або свої ціну і дні, напр.: 3000 4\nСкасувати: «стоп»",
              reply_to=p.get("msg_id"))
     elif action == "rw":
@@ -684,12 +819,16 @@ def handle_text(s, text):
         p["msg_id"] = msg["message_id"] if msg else p.get("msg_id")
 
 
+def bid_cur(s, pid, b):
+    return cur_label(b.get("currency") or (s["projects"].get(pid) or {}).get("currency") or "UAH")
+
+
 def status_text(s):
     lines = ["📊 Подані відгуки:"]
     for pid, b in s["bids"].items():
         mark = "🏆" if b.get("winner") else {"active": "⏳", "rejected": "✖️", "revoked": "↩️",
                                              "manual": "📝"}.get(b["status"], "•")
-        lines.append(f"{mark} {b['name']} — {b['price']} грн, {b['days']} дн.")
+        lines.append(f"{mark} {b['name']} — {b['price']} {bid_cur(s, pid, b)}, {b['days']} дн.")
     if len(lines) == 1:
         lines.append("поки немає")
     return "\n".join(lines)
@@ -777,7 +916,7 @@ def track(s):
             w = fh(f"/projects/{pid}/bids?filter[is_winner]=1").get("data", [])
             if any(str(x.get("id")) == b.get("bid_id") for x in w):
                 b["winner"] = True
-                send(f"🏆 ВАС ОБРАНО ВИКОНАВЦЕМ!\n«{b['name']}»\n💰 {b['price']} грн · {b['days']} дн.\n"
+                send(f"🏆 ВАС ОБРАНО ВИКОНАВЦЕМ!\n«{b['name']}»\n💰 {b['price']} {bid_cur(s, pid, b)} · {b['days']} дн.\n"
                      f"🔗 {b['link']}\n\nНаступний крок: напиши замовнику й уточни деталі.")
             elif w:
                 b["status"] = "lost"
@@ -798,7 +937,8 @@ def report(s):
 # ---------------------------------------------------------------- main loop
 
 def main():
-    missing = [n for n in ("FH_TOKEN", "TG_BOT_TOKEN", "TG_CHAT_ID") if not env(n)]
+    need = ("FH_TOKEN",) if DRY_RUN else ("FH_TOKEN", "TG_BOT_TOKEN", "TG_CHAT_ID")
+    missing = [n for n in need if not env(n)]
     if missing:
         sys.exit("missing secrets: " + ", ".join(missing))
     minutes = None
@@ -829,12 +969,15 @@ def main():
             except Exception as e:
                 log("report error", e)
             save_state(s)
-        if now - last_track >= TRACK_EVERY_MIN * 60:
+        if now - last_track >= TRACK_EVERY_MIN * 60 and not DRY_RUN:
             track(s)
             last_track = now
             save_state(s)
         wait = 50 if end is None else max(1, min(50, int(end - time.time())))
-        poll_telegram(s, wait)
+        if DRY_RUN:
+            time.sleep(min(wait, 5))
+        else:
+            poll_telegram(s, wait)
     save_state(s)
     log("bot stopped")
 

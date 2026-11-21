@@ -3,3 +3,4 @@ __pycache__/
 .env
 state.json
 state.json.tmp
+state.dryrun.json
