@@ -30,8 +30,8 @@ AI_TIMEOUT = 30       # seconds per AI request
 
 SCAN_EVERY_MIN = 10   # how often to look for new projects
 TRACK_EVERY_MIN = 5   # how often to check bids and notifications
-MAX_AGE_HOURS = 2     # newcomer wins by being among the first bids
-MAX_BIDS = 8          # skip crowded projects: no reviews yet = lost in a long list
+MAX_AGE_HOURS = 4     # fresh enough to still be among the early bids
+MAX_BIDS = 12         # skip crowded projects
 PAGES = 3
 MIN_FIT = 7           # fewer, better-fitting bids
 HOURS_PER_DAY = 3     # your free hours per day, for the days estimate
