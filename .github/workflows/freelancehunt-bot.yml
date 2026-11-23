@@ -48,7 +48,7 @@ jobs:
           PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
           REDDIT_INBOX_RSS: ${{ secrets.REDDIT_INBOX_RSS }}
           REDDIT_RSS_PROXY: ${{ secrets.REDDIT_RSS_PROXY }}
-          REDDIT_ENABLED: ${{ vars.REDDIT_ENABLED }}
+          REDDIT_ENABLED: ${{ vars.REDDIT_ENABLED || '0' }}   # Reddit blocks GitHub runners; set the variable to 1 with REDDIT_RSS_PROXY
           OUTREACH_AUTO: ${{ vars.OUTREACH_AUTO }}
           OUTREACH_DAILY: ${{ vars.OUTREACH_DAILY }}
         run: python fh_bot.py --minutes 345

@@ -652,8 +652,8 @@ def scan_reddit(s):
     if len(failed) == len(RD_SUBS) and not _rd_warned:
         _rd_warned = True
         send("⚠️ Reddit не віддає жодної стрічки з цього сервера (" + failed[0][:200] + ").\n"
-             "Варіанти: секрет REDDIT_RSS_PROXY, або змінна REDDIT_ENABLED=0 в Actions і запуск "
-             "з Reddit на своєму комп'ютері (див. README).")
+             "Варіанти: секрет REDDIT_RSS_PROXY, або вимкни Reddit змінною REDDIT_ENABLED=0 "
+             "(Settings → Variables).")
 
 
 def check_reddit_inbox(s):
