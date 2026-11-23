@@ -65,12 +65,6 @@ def test_no_budget_no_hours():
     assert any("без оцінки" in w for w in warnings)
 
 
-def test_freelancer_usd_budget_max():
-    p = proj(currency="USD", budget_max=250, budget_amount=250, hours=6, site="freelancer")
-    price, _, _ = b.suggest_terms(p)
-    assert 175 <= price <= 250
-
-
 def test_unknown_currency_does_not_crash():
     price, days, _ = b.suggest_terms(proj(currency="XYZ", budget_amount=100, hours=5))
     assert price > 0 and days >= 1
@@ -79,10 +73,8 @@ def test_unknown_currency_does_not_crash():
 def test_old_state_entries_do_not_crash():
     old_fh = {"name": "x", "desc": "", "cat": "bot", "currency": "UAH", "price": 1200,
               "budget_amount": None, "hours": None}
-    old_fl = {"name": "y", "desc": "", "cat": "Freelancer.com · bot", "currency": "USD",
-              "price": 200, "budget_amount": 200, "site": "freelancer"}
     minimal = {"name": "z"}
-    for p in (old_fh, old_fl, minimal):
+    for p in (old_fh, minimal):
         price, days, warnings = b.suggest_terms(p)
         assert price > 0 and days >= 1
     assert b.suggest_terms(old_fh)[0] == 1200    # UAH price from the AI is still honoured
@@ -148,3 +140,21 @@ def test_timeouts_skip_provider(monkeypatch):
     for _ in range(4):
         assert b.ai_text("hi") == "fine"
     assert calls.count("slow") == 2      # skipped after 2 timeouts in a row
+
+
+def test_freelancer_entries_are_dropped_from_old_state(tmp_path, monkeypatch):
+    import json
+    f = tmp_path / "state.json"
+    f.write_text(json.dumps({
+        "projects": {"123": {"name": "fh", "currency": "UAH"},
+                     "fl999": {"name": "fl", "site": "freelancer", "currency": "USD"}},
+        "bids": {"fl999": {"name": "fl", "price": 200, "days": 2, "status": "manual"}},
+        "await": {"kind": "terms", "pid": "fl999", "price": 200, "days": 2}}))
+    monkeypatch.setattr(b, "STATE_FILE", str(f))
+    s = b.load_state()
+    assert list(s["projects"]) == ["123"] and s["bids"] == {} and s["await"] is None
+
+
+def test_no_freelancer_code_left():
+    src = open(b.__file__, encoding="utf-8").read()
+    assert "freelancer.com/api" not in src and "scan_freelancer" not in src and "FL_" not in src
