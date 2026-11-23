@@ -47,9 +47,17 @@ def yt_counted(path, **params):
     return _yt(path, **params)
 
 
+def missing(*names):
+    gone = [n for n in names if not os.environ.get(n, "").strip()]
+    if gone:
+        print(f"::warning title=Secrets not set::{', '.join(gone)} — add them in Settings → Secrets → Actions",
+              flush=True)
+    return gone
+
+
 def check_youtube():
-    if not ox.YT_API_KEY:
-        out("YouTube: skipped (no YT_API_KEY)")
+    if missing("YT_API_KEY"):
+        out("YouTube: skipped (secret YT_API_KEY is empty)")
         return
     ox.yt = yt_counted
     ox.DRAFTS_PER_DAY = 3          # a handful of AI drafts is enough to judge
@@ -75,8 +83,8 @@ def check_youtube():
 
 # ---------------------------------------------------------------- Gmail
 def check_gmail():
-    if not (ox.GMAIL_USER and ox.GMAIL_APP_PASSWORD):
-        out("Gmail: skipped (no GMAIL_USER / GMAIL_APP_PASSWORD)")
+    if missing("GMAIL_USER", "GMAIL_APP_PASSWORD"):
+        out("Gmail: skipped (secrets GMAIL_USER / GMAIL_APP_PASSWORD are empty)")
         return
     me = ox.GMAIL_USER.lower()
     s = {}
@@ -127,9 +135,10 @@ def check_reddit():
         except Exception as e:
             out(f"Reddit r/{sub}: ❌ {e}")
     if not ok:
-        failed.append("reddit")
-        out("Reddit: ❌ no feed reachable from here. Set REDDIT_RSS_PROXY, or run the bot with "
+        # Not a code failure: the bot logs it and tells Telegram once per run.
+        out("Reddit: ⚠️ no feed reachable from here. Set REDDIT_RSS_PROXY, or run the bot with "
             "REDDIT_ENABLED=1 on your own machine and REDDIT_ENABLED=0 in Actions (see README).")
+        print("::warning title=Reddit blocked::No Reddit feed reachable from this runner", flush=True)
     if ox.REDDIT_INBOX_RSS:
         try:
             n = len(ox.parse_atom(ox._get(ox.REDDIT_INBOX_RSS)))

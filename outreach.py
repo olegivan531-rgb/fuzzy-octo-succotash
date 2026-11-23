@@ -564,7 +564,10 @@ def reddit_feed(path):
     errors = []
     for u in urls:
         try:
-            return _get(u)
+            raw = _get(u)
+            if is_feed(raw):
+                return raw
+            errors.append(f"{urllib.parse.urlsplit(u).netloc}: not a feed (blocked page?)")
         except urllib.error.HTTPError as e:
             errors.append(f"{urllib.parse.urlsplit(u).netloc}: HTTP {e.code}")
         except Exception as e:
@@ -573,6 +576,12 @@ def reddit_feed(path):
 
 
 ATOM = "{http://www.w3.org/2005/Atom}"
+_rd_warned = False   # one Telegram notice per run when Reddit blocks every feed
+
+
+def is_feed(raw):
+    head = raw[:4000].lstrip().lower()
+    return head.startswith(b"<?xml") or head.startswith(b"<feed") or b"<feed" in head[:600]
 
 
 def parse_atom(raw):
@@ -610,14 +619,17 @@ def scan_reddit(s):
     seen = set(rd["seen"])
     if rd["seen"] and not rd["subs_init"]:
         rd["subs_init"] = list(RD_SUBS)   # state from before per-sub tracking
+    global _rd_warned
+    failed = []
     for sub in RD_SUBS:
         try:
-            raw = reddit_feed(f"/r/{sub}/new/.rss?limit=50")
+            posts = parse_atom(reddit_feed(f"/r/{sub}/new/.rss?limit=50"))
         except Exception as e:
             log("reddit error", sub, e)
+            failed.append(str(e))
             continue
         first = sub not in rd["subs_init"]
-        for p in reversed(parse_atom(raw)):
+        for p in reversed(posts):
             if p["id"] in seen:
                 continue
             seen.add(p["id"])
@@ -637,6 +649,11 @@ def scan_reddit(s):
         if first:
             rd["subs_init"].append(sub)   # first successful read only remembers old posts
     rd["seen"] = rd["seen"][-2000:]
+    if len(failed) == len(RD_SUBS) and not _rd_warned:
+        _rd_warned = True
+        send("⚠️ Reddit не віддає жодної стрічки з цього сервера (" + failed[0][:200] + ").\n"
+             "Варіанти: секрет REDDIT_RSS_PROXY, або змінна REDDIT_ENABLED=0 в Actions і запуск "
+             "з Reddit на своєму комп'ютері (див. README).")
 
 
 def check_reddit_inbox(s):
@@ -645,7 +662,10 @@ def check_reddit_inbox(s):
     _state(s)
     rd = s["rd"]
     seen = set(rd["inbox_seen"])
-    for m in reversed(parse_atom(_get(REDDIT_INBOX_RSS))):
+    raw = _get(REDDIT_INBOX_RSS)
+    if not is_feed(raw):
+        raise RuntimeError("Reddit inbox: not a feed (blocked page or wrong REDDIT_INBOX_RSS)")
+    for m in reversed(parse_atom(raw)):
         if m["id"] in seen:
             continue
         rd["inbox_seen"].append(m["id"])

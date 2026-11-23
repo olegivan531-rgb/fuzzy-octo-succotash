@@ -281,3 +281,41 @@ def test_check_replies_end_to_end(monkeypatch):
     assert "Sure, send them!" in sent_msgs[-1] and "--b1" not in sent_msgs[-1]
     ox.check_replies(s)                              # nothing new after the last UID
     assert FakeIMAP.full == [6]
+
+
+BLOCK_PAGE = b"<!DOCTYPE html>\n<html><head><title>Blocked</title></head><body>" + b"x" * 200 + b"</body></html>"
+
+
+def test_blocked_html_page_falls_through_to_next_source(monkeypatch):
+    def get(url):
+        return ATOM_OLD if "old.reddit" in url else BLOCK_PAGE   # www answers 200 with an HTML block page
+
+    monkeypatch.setattr(ox, "_get", get)
+    monkeypatch.setattr(ox, "REDDIT_RSS_PROXY", "")
+    assert ox.reddit_feed("/r/forhire/new/.rss") == ATOM_OLD
+
+
+def test_all_feeds_blocked_no_crash_and_one_notice(monkeypatch):
+    monkeypatch.setattr(ox, "_get", lambda url: BLOCK_PAGE)
+    monkeypatch.setattr(ox, "REDDIT_RSS_PROXY", "")
+    monkeypatch.setattr(ox, "_rd_warned", False)
+    before = len(sent_msgs)
+    s = {}
+    ox.scan_reddit(s)
+    ox.scan_reddit(s)
+    notices = [m for m in sent_msgs[before:] if "Reddit не віддає" in m]
+    assert len(notices) == 1 and "not a feed" in notices[0]
+    assert s["rd"]["subs_init"] == []
+
+
+def test_inbox_block_page_raises_clear_error(monkeypatch):
+    monkeypatch.setattr(ox, "_get", lambda url: BLOCK_PAGE)
+    monkeypatch.setattr(ox, "REDDIT_INBOX_RSS", "https://www.reddit.com/message/inbox/.rss?feed=x")
+    import pytest
+    with pytest.raises(RuntimeError, match="not a feed"):
+        ox.check_reddit_inbox({})
+
+
+def test_is_feed():
+    assert ox.is_feed(ATOM_OLD) and ox.is_feed(b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+    assert not ox.is_feed(BLOCK_PAGE)
