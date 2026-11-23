@@ -14,8 +14,11 @@ Env (each part turns on only when its keys are set):
   OUTREACH_AUTO=1   send without asking (default 0: each email waits for your tap)
   OUTREACH_DAILY    emails per day, follow-ups included (default 12)
   REDDIT_INBOX_RSS  private inbox feed URL from reddit.com/prefs/feeds (optional)
+  REDDIT_RSS_PROXY  optional URL template for Reddit feeds, e.g. https://my-proxy.example/?u={url}
+                    (Reddit often answers 403/429 to datacenter IPs such as GitHub Actions)
 """
-import email.utils, html, imaplib, json, random, re, smtplib, time, urllib.parse, urllib.request
+import email, email.policy, email.utils, html, imaplib, json, random, re, smtplib, time
+import urllib.error, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.header import decode_header, make_header
@@ -32,6 +35,7 @@ GMAIL_USER = env("GMAIL_USER")
 GMAIL_APP_PASSWORD = env("GMAIL_APP_PASSWORD").replace(" ", "")
 PORTFOLIO_URL = env("PORTFOLIO_URL")
 REDDIT_INBOX_RSS = env("REDDIT_INBOX_RSS")
+REDDIT_RSS_PROXY = env("REDDIT_RSS_PROXY")
 AUTO = env("OUTREACH_AUTO", "0") == "1"
 DAILY_CAP = int(env("OUTREACH_DAILY", "12") or 12)
 
@@ -44,6 +48,8 @@ SEND_HOURS_UTC = (13, 21)   # 9:00-17:00 New York
 FOLLOWUP_AFTER_D = 4        # one short follow-up if no reply
 DRAFTS_PER_DAY = 15         # how many new channels to prepare per day
 BOUNCE_PAUSE = 3            # pause sending after this many bounces in 24 h
+MAX_SKIPPED = 5000          # remembered rejected channels (oldest forgotten first)
+MAX_MAIL_BYTES = 200_000    # bigger messages are not downloaded (attachments)
 
 # ----- who to look for -----
 YT_QUERIES = ["podcast interview", "business advice", "personal finance", "real estate investing",
@@ -119,7 +125,7 @@ def _state(s):
                  "next_gap": 0, "paused": False, "imap_uid": 0, "bounces": []}.items():
         y.setdefault(k, v)
     s.setdefault("rd", {})
-    for k, v in {"seen": [], "inbox_seen": [], "inbox_init": False}.items():
+    for k, v in {"seen": [], "inbox_seen": [], "inbox_init": False, "subs_init": []}.items():
         s["rd"].setdefault(k, v)
     return y
 
@@ -241,7 +247,14 @@ def discover(s):
         else:
             c["status"] = "draft"
             show_draft(cid, c)
+    _trim_skipped(y)
     log(f"youtube '{q}': {len(chans)} channels, {made} drafts, {skipped} skipped")
+
+
+def _trim_skipped(y):
+    skipped = [cid for cid, c in y["ch"].items() if c.get("status") == "skip" and "email" not in c]
+    for cid in skipped[:max(0, len(skipped) - MAX_SKIPPED)]:
+        del y["ch"][cid]
 
 
 def recent_uploads(ch):
@@ -422,6 +435,11 @@ def send_due(s):
             c["msgid"] = smtp_send(c["email"], c["subject"], c["body"])
             c["status"], c["sent_at"] = "sent", now
             send(f"📤 Надіслано: {c['name']} · {c['subs']:,} підп.\n📧 {c['email']} · «{c['subject']}»")
+    except smtplib.SMTPRecipientsRefused as e:
+        log("smtp recipient refused", c.get("email"), e)
+        mark_bounced(s, c)
+        y["last_sent"], y["next_gap"] = now, 10 * 60
+        return
     except smtplib.SMTPAuthenticationError:
         y["paused"] = True
         send("⚠️ Gmail не приймає вхід. Перевір GMAIL_USER і пароль застосунку (GMAIL_APP_PASSWORD). "
@@ -457,29 +475,67 @@ def check_replies(s):
         _, data = im.uid("search", None, f"(SINCE {since})")
         uids = [int(u) for u in (data[0] or b"").split() if int(u) > y["imap_uid"]]
         for uid in uids:
-            _, msg = im.uid("fetch", str(uid), "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)] BODY.PEEK[TEXT]<0.3000>)")
-            parts = [p[1] for p in msg if isinstance(p, tuple)]
-            head = parts[0].decode(errors="replace") if parts else ""
-            body = parts[1].decode(errors="replace") if len(parts) > 1 else ""
+            _, msg = im.uid("fetch", str(uid), "(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM)])")
+            meta = b" ".join(p[0] for p in msg if isinstance(p, tuple))
+            head = b"".join(p[1] for p in msg if isinstance(p, tuple)).decode(errors="replace")
             fm = re.search(r"^From:(.*)$", head, re.I | re.M)
             frm = email.utils.parseaddr(_hdr(fm.group(1) if fm else ""))[1].lower()
-            on_mail(s, frm, body, contacted)
+            size = int((re.search(rb"RFC822\.SIZE (\d+)", meta) or [0, b"0"])[1])
+            if (frm in contacted or _is_bounce(frm)) and size <= MAX_MAIL_BYTES:
+                _, full = im.uid("fetch", str(uid), "(BODY.PEEK[])")
+                raw = b"".join(p[1] for p in full if isinstance(p, tuple))
+                on_mail(s, frm, mail_text(raw), contacted)
             y["imap_uid"] = max(y["imap_uid"], uid)
+
+
+def mail_text(raw):
+    """Readable text of an email: text/plain parts decoded (base64, quoted-printable), else stripped html.
+    Bounce reports (message/delivery-status) are included so the failed address can be found."""
+    try:
+        m = email.message_from_bytes(raw, policy=email.policy.default)
+    except Exception:
+        return raw.decode(errors="replace")
+    plain, htm = [], []
+    for part in m.walk():
+        ctype = part.get_content_type()
+        if part.is_multipart() or part.get_content_disposition() == "attachment":
+            continue
+        try:
+            if ctype == "text/plain":
+                plain.append(part.get_content())
+            elif ctype == "text/html":
+                htm.append(re.sub(r"<[^>]+>", " ", html.unescape(part.get_content())))
+            elif ctype in ("message/delivery-status", "text/rfc822-headers"):
+                payload = part.get_payload()
+                plain.append(payload if isinstance(payload, str) else
+                             " ".join(str(x) for x in (payload if isinstance(payload, list) else [payload])))
+        except Exception:
+            continue
+    return "\n".join(plain) if plain else "\n".join(htm)
+
+
+def _is_bounce(frm):
+    return bool(re.search(r"mailer-daemon|postmaster", frm))
+
+
+def mark_bounced(s, c):
+    y = _state(s)
+    c["status"] = "bounced"
+    y["bounces"] = _24h(y["bounces"], time.time()) + [time.time()]
+    send(f"✖️ Лист не дійшов: {c['name']} ({c.get('email')})")
+    if len(y["bounces"]) >= BOUNCE_PAUSE and not y["paused"]:
+        y["paused"] = True
+        send(f"⏸ {BOUNCE_PAUSE} листи не дійшли за добу — розсилку зупинено, щоб Gmail не "
+             f"позначив тебе спамером. Перевір і напиши /go.")
 
 
 def on_mail(s, frm, body, contacted):
     y = _state(s)
-    if re.search(r"mailer-daemon|postmaster", frm):
+    if _is_bounce(frm):
+        low = body.lower()
         for addr, cid in contacted.items():
-            if addr in body.lower():
-                c = y["ch"][cid]
-                c["status"] = "bounced"
-                y["bounces"] = _24h(y["bounces"], time.time()) + [time.time()]
-                send(f"✖️ Лист не дійшов: {c['name']} ({addr})")
-                if len(y["bounces"]) >= BOUNCE_PAUSE:
-                    y["paused"] = True
-                    send(f"⏸ {BOUNCE_PAUSE} листи не дійшли за добу — розсилку зупинено, щоб Gmail не "
-                         f"позначив тебе спамером. Перевір і напиши /go.")
+            if addr in low and y["ch"][cid].get("status") != "bounced":
+                mark_bounced(s, y["ch"][cid])
         return
     cid = contacted.get(frm)
     if not cid:
@@ -487,7 +543,7 @@ def on_mail(s, frm, body, contacted):
     c = y["ch"][cid]
     c["status"] = "replied"
     text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
-    text = re.split(r"On .{5,80} wrote:", text)[0].strip()[:700]
+    text = re.split(r"On .{5,120}? wrote:", text)[0].strip()[:700]
     send(f"📩🎬 ВІДПОВІДЬ від {c['name']} ({frm})\n\n{text}\n\n"
          f"🔗 Gmail: https://mail.google.com/mail/u/0/#search/from%3A{urllib.parse.quote(frm)}\n"
          f"Канал: {c['link']}")
@@ -498,6 +554,22 @@ def _get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "linux:shorts-editor-watch:1.0 (by /u/oleg)"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.read()
+
+
+def reddit_feed(path):
+    """Reddit RSS via www, then old.reddit, then REDDIT_RSS_PROXY. Raises with every status seen."""
+    urls = [f"https://www.reddit.com{path}", f"https://old.reddit.com{path}"]
+    if REDDIT_RSS_PROXY:
+        urls.append(REDDIT_RSS_PROXY.replace("{url}", urllib.parse.quote(urls[0], safe="")))
+    errors = []
+    for u in urls:
+        try:
+            return _get(u)
+        except urllib.error.HTTPError as e:
+            errors.append(f"{urllib.parse.urlsplit(u).netloc}: HTTP {e.code}")
+        except Exception as e:
+            errors.append(f"{urllib.parse.urlsplit(u).netloc}: {e}")
+    raise RuntimeError("; ".join(errors))
 
 
 ATOM = "{http://www.w3.org/2005/Atom}"
@@ -536,16 +608,15 @@ def scan_reddit(s):
     _state(s)
     rd = s["rd"]
     seen = set(rd["seen"])
-    first = not rd["seen"]
+    if rd["seen"] and not rd["subs_init"]:
+        rd["subs_init"] = list(RD_SUBS)   # state from before per-sub tracking
     for sub in RD_SUBS:
         try:
-            raw = _get(f"https://www.reddit.com/r/{sub}/new/.rss?limit=50")
+            raw = reddit_feed(f"/r/{sub}/new/.rss?limit=50")
         except Exception as e:
-            try:
-                raw = _get(f"https://old.reddit.com/r/{sub}/new/.rss?limit=50")
-            except Exception:
-                log("reddit error", sub, e)
-                continue
+            log("reddit error", sub, e)
+            continue
+        first = sub not in rd["subs_init"]
         for p in reversed(parse_atom(raw)):
             if p["id"] in seen:
                 continue
@@ -563,6 +634,8 @@ def scan_reddit(s):
             send(f"🟠 Reddit r/{sub}: {p['title']}\nu/{p['author']}\n\n{p['text'][:400]}"
                  f"{'…' if len(p['text']) > 400 else ''}\n🔗 {p['link']}\n\n✍️ Повідомлення:\n{msg}",
                  [[{"text": "✉️ Відкрити готове повідомлення", "url": dm}]] if dm else None)
+        if first:
+            rd["subs_init"].append(sub)   # first successful read only remembers old posts
     rd["seen"] = rd["seen"][-2000:]
 
 

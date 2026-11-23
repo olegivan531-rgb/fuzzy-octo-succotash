@@ -33,6 +33,9 @@
 - `GMAIL_USER` — твоя адреса Gmail; `GMAIL_APP_PASSWORD` — myaccount.google.com → Безпека → двоетапна перевірка має бути увімкнена → «Паролі застосунків»
 - `PORTFOLIO_URL` — посилання на приклади (YouTube-плейлист або Google Drive із 3–5 шортсами)
 - `REDDIT_INBOX_RSS` (необов'язково) — reddit.com/prefs/feeds → «your inbox» → скопіюй посилання RSS
+- `REDDIT_RSS_PROXY` (необов'язково, секрет) — шаблон адреси проксі для RSS Reddit з `{url}` усередині. Reddit часто відповідає 403/429 на запити з серверів GitHub; тоді або вкажи проксі, або вимкни Reddit в Actions змінною `REDDIT_ENABLED=0` (Settings → Variables) і запускай бота з Reddit на своєму комп'ютері (`REDDIT_ENABLED=1 FL_ENABLED=0 python3 fh_bot.py` з тими ж ключами). Не запускай дві копії з одним `TG_BOT_TOKEN` одночасно: Telegram віддає оновлення лише одній.
+
+**Перевірка на живих сервісах:** Actions → **outreach-check** → Run workflow (запускається й сама при змінах `outreach.py`). Робить один пошук YouTube і показує чернетки (без надсилання), надсилає один тестовий лист на `GMAIL_USER` і перевіряє, що бот бачить його через IMAP, перевіряє RSS кожного сабредіту. Нікому стороньому не пише, у Telegram нічого не шле. Для IMAP у Gmail має бути увімкнено IMAP (Налаштування → Пересилання та POP/IMAP).
 
 ## Ключі (Settings → Secrets and variables → Actions)
 `FH_TOKEN`, `TG_BOT_TOKEN`, `TG_CHAT_ID`, `GROQ_API_KEY`, `GEMINI_API_KEY` (необов'язкові: `ANTHROPIC_API_KEY`, `GEMINI_MODEL`, `GROQ_MODEL`).

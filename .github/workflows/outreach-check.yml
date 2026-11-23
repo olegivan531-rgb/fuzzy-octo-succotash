@@ -1,0 +1,40 @@
+name: outreach-check
+
+# Live check of outreach.py (YouTube, Gmail, Reddit) with the repo secrets.
+# Sends one test email to GMAIL_USER only; never writes to strangers or to Telegram.
+on:
+  workflow_dispatch:
+  push:
+    branches: [shorts-outreach]
+    paths: [outreach.py, tools/outreach_check.py, .github/workflows/outreach-check.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: outreach-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: pip install -q pytest && python -m pytest -q
+      - name: Live services
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
+          REDDIT_INBOX_RSS: ${{ secrets.REDDIT_INBOX_RSS }}
+          REDDIT_RSS_PROXY: ${{ secrets.REDDIT_RSS_PROXY }}
+        run: python tools/outreach_check.py
