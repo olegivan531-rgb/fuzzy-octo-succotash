@@ -42,6 +42,15 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
+          REDDIT_INBOX_RSS: ${{ secrets.REDDIT_INBOX_RSS }}
+          REDDIT_RSS_PROXY: ${{ secrets.REDDIT_RSS_PROXY }}
+          REDDIT_ENABLED: ${{ vars.REDDIT_ENABLED }}
+          OUTREACH_AUTO: ${{ vars.OUTREACH_AUTO }}
+          OUTREACH_DAILY: ${{ vars.OUTREACH_DAILY }}
         run: python fh_bot.py --minutes 345
 
       - name: Save bot state

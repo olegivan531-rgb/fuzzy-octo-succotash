@@ -17,6 +17,8 @@ Env: FH_TOKEN, TG_BOT_TOKEN, TG_CHAT_ID
 import html, json, math, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timezone, timedelta
 
+import outreach as ox
+
 
 def env(name, default=""):
     """Env var with stray spaces/newlines (common when pasting secrets) removed."""
@@ -353,6 +355,7 @@ def startup_report():
             ok = True
         except Exception as e:
             lines.append(f"• {pname}: ❌ {str(e)[:150]}")
+    lines += ["", "Пошук клієнтів на монтаж:"] + ox.startup_lines()
     if not ok:
         lines.append("\n⚠️ Жоден ШІ не працює — відгуки будуть заготовками. Перевір ключі в Secrets.")
     return "\n".join(lines)
@@ -739,6 +742,9 @@ def handle_callback(s, cq):
     if ":" not in data:
         return
     action, pid = data.split(":", 1)
+    if action in ox.ACTIONS:
+        ox.handle_callback(s, action, pid)
+        return
     p = s["projects"].get(pid)
     if not p:
         send("Це замовлення вже не відстежується.")
@@ -777,9 +783,20 @@ def handle_text(s, text):
         except Exception as e:
             send(f"⚠️ Не вдалося відкрити замовлення: {e}")
         return
+    if ox.handle_command(s, t):
+        return
+    if w and w["kind"] == "yt_rewrite":
+        if t.lower() in ("стоп", "stop", "скасувати"):
+            s["await"] = None
+            send("Скасовано.")
+            return
+        s["await"] = None
+        ox.handle_rewrite(s, w["pid"], t)
+        return
     if not w:
         send("Команди: кнопки під замовленнями. /status — подані відгуки.\n"
-             "Надішли посилання на будь-яке замовлення з Freelancehunt — напишу відгук і дам кнопки.") \
+             "Надішли посилання на будь-яке замовлення з Freelancehunt — напишу відгук і дам кнопки.\n"
+             "Листи каналам: /outreach — статистика, /pause — зупинити, /go — продовжити.") \
             if t != "/status" else send(status_text(s))
         return
     if t.lower() in ("стоп", "stop", "скасувати"):
@@ -937,6 +954,7 @@ def report(s):
 # ---------------------------------------------------------------- main loop
 
 def main():
+    ox.init(send=send, edit_buttons=edit_buttons, ai_text=ai_text, log=log, http_json=http_json)
     need = ("FH_TOKEN",) if DRY_RUN else ("FH_TOKEN", "TG_BOT_TOKEN", "TG_CHAT_ID")
     missing = [n for n in need if not env(n)]
     if missing:
@@ -961,6 +979,7 @@ def main():
                     scan_freelancer(s)
                 except Exception as e:
                     log("freelancer.com scan error", e)
+            ox.tick_scan(s)
             last_scan = now
             save_state(s)
         if now - s["last_report"] >= REPORT_EVERY_H * 3600:
@@ -971,6 +990,7 @@ def main():
             save_state(s)
         if now - last_track >= TRACK_EVERY_MIN * 60 and not DRY_RUN:
             track(s)
+            ox.tick_track(s)
             last_track = now
             save_state(s)
         wait = 50 if end is None else max(1, min(50, int(end - time.time())))
