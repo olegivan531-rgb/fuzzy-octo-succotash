@@ -136,8 +136,8 @@ def check_reddit():
             out(f"Reddit r/{sub}: ❌ {e}")
     if not ok:
         # Not a code failure: the bot logs it and tells Telegram once per run.
-        out("Reddit: ⚠️ no feed reachable from here. Set REDDIT_RSS_PROXY, or run the bot with "
-            "REDDIT_ENABLED=1 on your own machine and REDDIT_ENABLED=0 in Actions (see README).")
+        out("Reddit: ⚠️ no feed reachable from here. The bot workflow keeps Reddit off by default; "
+            "to use it set REDDIT_RSS_PROXY and REDDIT_ENABLED=1 (see README).")
         print("::warning title=Reddit blocked::No Reddit feed reachable from this runner", flush=True)
     if ox.REDDIT_INBOX_RSS:
         try:
