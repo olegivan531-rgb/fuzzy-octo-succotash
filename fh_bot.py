@@ -51,15 +51,6 @@ DEFAULT_HOURS = 8       # when neither the AI nor the text gives a volume
 
 DRY_RUN = "--dry-run" in sys.argv   # print messages instead of sending; never poll Telegram
 
-# Freelancer.com (public API, no key). Bids are placed by hand on the site; the bot finds and drafts.
-FL_ENABLED = env("FL_ENABLED", "1") == "1"
-FL_QUERIES = ["telegram bot", "google sheets", "apps script", "n8n", "chatgpt automation", "ai agent",
-              "web scraping", "next.js", "react", "supabase", "landing page", "api integration",
-              "flutter", "figma", "translation ukrainian", "translation french"]
-FL_CURRENCIES = {"USD", "EUR", "GBP", "AUD", "CAD"}
-FL_MIN_BUDGET = 50    # max budget below this (in FL_CURRENCIES) is not worth a bid
-FL_MAX_BIDS = 12      # Freelancer.com is busier than Freelancehunt
-
 # Keywords match from the START of a word ("бот" matches "боти", not "роботу").
 CATEGORIES = {
     "bot": ["telegram", "телеграм", "бот", "bot", "чат-бот", "chatbot", "viber"],
@@ -120,7 +111,7 @@ AI_PROMPT = """Ти допомагаєш фрилансеру відбирати
 Профіль виконавця:
 {profile}
 
-Замовлення з {site}:
+Замовлення з Freelancehunt:
 Назва: {name}
 Бюджет: {budget}
 Відгуків уже: {bids}
@@ -132,7 +123,7 @@ AI_PROMPT = """Ти допомагаєш фрилансеру відбирати
   "why": "<1 коротке речення чому>",
   "hours": <оцінка годин роботи, число>,
   "price_uah": <ціна в гривнях: виконавець новий на майданчику і ще без відгуків, тож 70-85% бюджету замовника; якщо бюджет не вказано — нижче середньої ринкової ціни для такого обсягу; число>,
-  "proposal": "<відгук мовою замовлення (укр/рос/англ), 50-90 слів. ПЕРШЕ речення (його видно в превʼю) — одразу про ЦЮ задачу і результат, без «Вітаю, мене звати»: напр. «Зроблю бота запису з нагадуваннями в Google Calendar — подібний уже працює в мене в портфоліо». Далі: як саме зробиш (2-3 кроки з конкретними інструментами); якщо в портфоліо є схожа робота — назви її (портфоліо: облік для кавʼярні в Google Sheets, Telegram-бот запису, бот пошуку заявок на Freelancehunt, FluxHaulMate — SaaS для перевізників США, команда ШІ-агентів); запропонуй безпечну оплату (на Freelancehunt — Безпечна угода, на Freelancer.com — milestone payment); 1 уточнювальне питання. Без шаблонних фраз, без емодзі; не вигадуй інших робіт чи відгуків; не обіцяй строк і ціну>"}}"""
+  "proposal": "<відгук мовою замовлення (укр/рос/англ), 50-90 слів. ПЕРШЕ речення (його видно в превʼю) — одразу про ЦЮ задачу і результат, без «Вітаю, мене звати»: напр. «Зроблю бота запису з нагадуваннями в Google Calendar — подібний уже працює в мене в портфоліо». Далі: як саме зробиш (2-3 кроки з конкретними інструментами); якщо в портфоліо є схожа робота — назви її (портфоліо: облік для кавʼярні в Google Sheets, Telegram-бот запису, бот пошуку заявок на Freelancehunt, FluxHaulMate — SaaS для перевізників США, команда ШІ-агентів); запропонуй безпечну оплату через Безпечну угоду Freelancehunt; 1 уточнювальне питання. Без шаблонних фраз, без емодзі; не вигадуй інших робіт чи відгуків; не обіцяй строк і ціну>"}}"""
 
 REWRITE_PROMPT = """Перепиши відгук фрилансера на замовлення за вказівкою.
 Замовлення: {name}
@@ -243,6 +234,13 @@ def load_state():
                  "bids": {}, "feed_seen": [], "feed_init": False,
                  "stats": {}, "last_report": time.time()}.items():
         s.setdefault(k, v)
+    # Freelancer.com support was removed: forget its projects, bids and a pending reply
+    gone = {pid for pid, p in s["projects"].items() if p.get("site") == "freelancer"}
+    for pid in gone:
+        s["projects"].pop(pid, None)
+        s["bids"].pop(pid, None)
+    if (s.get("await") or {}).get("pid") in gone:
+        s["await"] = None
     return s
 
 
@@ -335,8 +333,8 @@ def _review_json(text):
     return r
 
 
-def ai_review(name, desc, skills, budget_s, bids, site="Freelancehunt"):
-    return ai_text(AI_PROMPT.format(profile=PROFILE, site=site, name=name, budget=budget_s,
+def ai_review(name, desc, skills, budget_s, bids):
+    return ai_text(AI_PROMPT.format(profile=PROFILE, name=name, budget=budget_s,
                                     bids=bids, skills=skills, desc=desc[:3000]), parse=_review_json)
 
 def startup_report():
@@ -472,85 +470,6 @@ def scan_projects(s):
     log(f"scan: {len(found)} checked, {sent} sent")
 
 
-def scan_freelancer(s):
-    """Fresh fixed-price projects from Freelancer.com public API -> same Telegram flow."""
-    seen = set(s["seen"])
-    now = time.time()
-    st = s["stats"]
-    def count(k):
-        st[k] = st.get(k, 0) + 1
-    found, sent = {}, 0
-    for q in FL_QUERIES:
-        url = ("https://www.freelancer.com/api/projects/0.1/projects/active/?"
-               + urllib.parse.urlencode({"query": q, "limit": 20, "full_description": "true",
-                                         "job_details": "true", "sort_field": "time_updated"}))
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "fh-bot/1.0"})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                for it in json.load(r).get("result", {}).get("projects", []):
-                    found[str(it.get("id"))] = it
-        except Exception as e:
-            log("freelancer.com error", q, e)
-    for fid, it in found.items():
-        pid = f"fl{fid}"
-        if pid in seen:
-            continue
-        seen.add(pid)
-        s["seen"].append(pid)
-        count("fl_new")
-        if now - (it.get("time_submitted") or 0) > MAX_AGE_HOURS * 3600:
-            count("old")
-            continue
-        if it.get("type") != "fixed":
-            count("fl_hourly")
-            continue
-        cur = (it.get("currency") or {}).get("code", "")
-        budget = it.get("budget") or {}
-        bmax = budget.get("maximum") or budget.get("minimum") or 0
-        if cur not in FL_CURRENCIES or bmax < FL_MIN_BUDGET:
-            count("fl_cheap")
-            continue
-        bids = (it.get("bid_stats") or {}).get("bid_count") or 0
-        if bids > FL_MAX_BIDS:
-            count("crowded")
-            continue
-        name = it.get("title", "")
-        desc = re.sub(r"\s+", " ", it.get("description") or it.get("preview_description") or "")
-        skills = ", ".join(j.get("name", "") for j in it.get("jobs") or [])
-        cat = classify(f"{name} {desc} {skills}")
-        if not cat:
-            count("off_topic")
-            continue
-        budget_s = f"{budget.get('minimum') or 0:.0f}–{bmax:.0f} {cur}"
-        link = "https://www.freelancer.com/projects/" + (it.get("seo_url") or fid)
-        r = ai_review(name, desc, skills, budget_s, bids, site="Freelancer.com")
-        hours = None
-        if r is not None:
-            try:
-                fit = int(r.get("fit", 0))
-            except (TypeError, ValueError):
-                fit = 0
-            if fit < MIN_FIT:
-                count("low_fit")
-                continue
-            hours = r.get("hours")
-            head = f"⭐ {fit}/10 · ~{hours or '?'} год · {r.get('why', '')}"
-            proposal = r.get("proposal", "")
-        else:
-            head = "⚠️ ШІ недоступний — відгук-заготовка, перепиши перед подачею"
-            proposal = FALLBACK.format(name=name)
-        p = {"name": name, "desc": desc, "skills": skills, "cat": f"Freelancer.com · {cat}", "bids": bids,
-             "budget_s": budget_s, "budget_amount": bmax, "budget_max": bmax, "currency": cur,
-             "safe_type": None, "link": link, "head": head, "proposal": proposal, "hours": hours,
-             "status": "new", "site": "freelancer"}
-        msg = send(project_text(p), project_buttons(pid))
-        p["msg_id"] = msg["message_id"] if msg else None
-        s["projects"][pid] = p
-        sent += 1
-        count("sent")
-    log(f"freelancer.com: {len(found)} checked, {sent} sent")
-
-
 def manual_project(s, pid):
     """Project the user sent by link: always show it with buttons, whatever the filters say."""
     send("⏳ Готую відгук…")
@@ -674,10 +593,10 @@ def terms(p):
         warnings.append("⚠️ без оцінки обсягу — уточни перед подачею")
     base_uah = hours * HOURLY_UAH
     ai_uah = _num(p.get("price_uah"))
-    if not ai_uah and p.get("site") != "freelancer":
+    if not ai_uah:
         ai_uah = _num(p.get("price"))       # older state.json entries kept the AI's UAH price here
     price_uah = ai_uah or base_uah
-    budget_uah = to_uah(p.get("budget_max") or p.get("budget_amount"), cur)
+    budget_uah = to_uah(p.get("budget_amount"), cur)
     lo = hi = 0
     if budget_uah:
         lo, hi = PRICE_FLOOR * budget_uah, PRICE_CEIL * budget_uah
@@ -698,9 +617,6 @@ def suggest_terms(p):
 
 def place_bid(s, pid, price, days):
     p = s["projects"][pid]
-    if p.get("site") == "freelancer":
-        manual_bid(s, pid, price, days)
-        return
     body = {"days": int(days), "budget": {"amount": int(price), "currency": p.get("currency") or "UAH"},
             "safe_type": p.get("safe_type"), "comment": p["proposal"], "is_hidden": False}
     try:
@@ -725,8 +641,7 @@ def manual_bid(s, pid, price, days):
     s["bids"][pid] = {"bid_id": "", "status": "manual", "winner": False, "name": p["name"],
                       "link": p["link"], "price": price, "days": days, "currency": cur}
     edit_buttons(p.get("msg_id"))
-    site = "Freelancer.com" if p.get("site") == "freelancer" else "Freelancehunt"
-    send(f"📝 Подай відгук вручну на {site} (1 хв):\n\n"
+    send("📝 Подай відгук вручну на Freelancehunt (1 хв):\n\n"
          f"1. Відкрий: {html.escape(p['link'] or '')}\n"
          f"2. Ціна: <code>{price}</code> {cur}, строк: <code>{days}</code> дн.\n"
          "3. Текст відгуку — у наступному повідомленні, натисни на нього, щоб скопіювати.",
@@ -974,11 +889,6 @@ def main():
                 scan_projects(s)
             except Exception as e:
                 log("scan error", e)
-            if FL_ENABLED:
-                try:
-                    scan_freelancer(s)
-                except Exception as e:
-                    log("freelancer.com scan error", e)
             ox.tick_scan(s)
             last_scan = now
             save_state(s)
